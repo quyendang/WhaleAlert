@@ -7,8 +7,21 @@ from app.config import get_settings
 
 settings = get_settings()
 
+
+def _normalize_db_url(url: str) -> str:
+    """
+    Koyeb (and Heroku/Railway) provide DATABASE_URL as postgres://...
+    SQLAlchemy asyncpg requires postgresql+asyncpg://...
+    """
+    if url.startswith("postgres://"):
+        url = "postgresql+asyncpg://" + url[len("postgres://"):]
+    elif url.startswith("postgresql://") and "+asyncpg" not in url:
+        url = "postgresql+asyncpg://" + url[len("postgresql://"):]
+    return url
+
+
 engine = create_async_engine(
-    settings.database_url,
+    _normalize_db_url(settings.database_url),
     echo=settings.is_dev,
     pool_size=10,
     max_overflow=20,

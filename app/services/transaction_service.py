@@ -7,7 +7,6 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.models.transaction import ChainCursor, WhaleTransaction
 from app.services.label_service import get_label
 from app.services.price_service import price_service
 
@@ -32,8 +31,11 @@ class TransactionService:
         is_contract: bool = False,
     ) -> bool:
         """
-        Check if transaction meets whale threshold, then upsert into DB.
-        Returns True if saved, False if below threshold or duplicate.
+        Check threshold, then upsert into DB.
+        Returns True if saved, False if below threshold, duplicate, or error.
+
+        IMPORTANT: On any DB error, rolls back the session so the caller's
+        session remains usable for subsequent operations.
         """
         usd_price = price_service.get_usd_price(native_symbol)
         if usd_price is None:
@@ -49,7 +51,6 @@ class TransactionService:
         from_label = get_label(from_address or "")
         to_label = get_label(to_address or "")
 
-        # Classify tx type based on labels
         if tx_type == "transfer":
             if to_label != "Unknown":
                 tx_type = "exchange_deposit"
@@ -68,32 +69,38 @@ class TransactionService:
             ON CONFLICT ON CONSTRAINT uq_wt_hash_chain DO NOTHING
         """)
 
-        result = await db.execute(
-            stmt,
-            {
-                "tx_hash": tx_hash,
-                "chain": chain,
-                "block_number": block_number,
-                "block_time": block_time,
-                "from_address": from_address,
-                "to_address": to_address,
-                "from_label": from_label,
-                "to_label": to_label,
-                "amount_native": str(amount_native),
-                "native_symbol": native_symbol,
-                "amount_usd": str(amount_usd.quantize(Decimal("0.01"))),
-                "usd_price_used": str(Decimal(str(usd_price))),
-                "tx_type": tx_type,
-                "is_contract": is_contract,
-            },
-        )
-        await db.commit()
+        try:
+            result = await db.execute(
+                stmt,
+                {
+                    "tx_hash": tx_hash,
+                    "chain": chain,
+                    "block_number": block_number,
+                    "block_time": block_time,
+                    "from_address": from_address,
+                    "to_address": to_address,
+                    "from_label": from_label,
+                    "to_label": to_label,
+                    "amount_native": str(amount_native),
+                    "native_symbol": native_symbol,
+                    "amount_usd": str(amount_usd.quantize(Decimal("0.01"))),
+                    "usd_price_used": str(Decimal(str(usd_price))),
+                    "tx_type": tx_type,
+                    "is_contract": is_contract,
+                },
+            )
+            await db.commit()
+        except Exception as exc:
+            # Rollback so the session is usable for subsequent calls (e.g. update_cursor)
+            await db.rollback()
+            logger.warning("[%s] Failed to save tx %s: %s", chain, tx_hash[:12], exc)
+            return False
 
         inserted = result.rowcount > 0
         if inserted:
             logger.info(
                 "Whale tx saved: %s %s %s %s ($%s)",
-                chain, native_symbol, float(amount_native), tx_hash[:12], int(amount_usd)
+                chain, native_symbol, float(amount_native), tx_hash[:12], int(amount_usd),
             )
         return inserted
 
@@ -104,34 +111,52 @@ class TransactionService:
         last_block: int,
         error: str | None = None,
     ) -> None:
-        if error:
-            stmt = text("""
-                UPDATE chain_cursors
-                SET error_count = error_count + 1,
-                    last_error = :error,
-                    last_polled_at = :now
-                WHERE chain = :chain
-            """)
-            await db.execute(stmt, {"chain": chain, "error": error, "now": datetime.now(timezone.utc)})
-        else:
-            stmt = text("""
-                UPDATE chain_cursors
-                SET last_block = :last_block,
-                    last_polled_at = :now,
-                    error_count = 0,
-                    last_error = NULL
-                WHERE chain = :chain
-            """)
-            await db.execute(stmt, {"chain": chain, "last_block": last_block, "now": datetime.now(timezone.utc)})
-        await db.commit()
+        """Update chain cursor. Rolls back and swallows on DB error to avoid masking original exception."""
+        # Rollback any lingering failed transaction before writing
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+
+        try:
+            if error:
+                # Truncate error string to avoid hitting column limits
+                error_short = error[:500] if error else None
+                stmt = text("""
+                    UPDATE chain_cursors
+                    SET error_count = error_count + 1,
+                        last_error = :error,
+                        last_polled_at = :now
+                    WHERE chain = :chain
+                """)
+                await db.execute(stmt, {"chain": chain, "error": error_short, "now": datetime.now(timezone.utc)})
+            else:
+                stmt = text("""
+                    UPDATE chain_cursors
+                    SET last_block = :last_block,
+                        last_polled_at = :now,
+                        error_count = 0,
+                        last_error = NULL
+                    WHERE chain = :chain
+                """)
+                await db.execute(stmt, {"chain": chain, "last_block": last_block, "now": datetime.now(timezone.utc)})
+            await db.commit()
+        except Exception as exc:
+            await db.rollback()
+            logger.error("[%s] Failed to update cursor: %s", chain, exc)
 
     async def get_cursor(self, db: AsyncSession, chain: str) -> int:
-        result = await db.execute(
-            text("SELECT last_block FROM chain_cursors WHERE chain = :chain"),
-            {"chain": chain},
-        )
-        row = result.fetchone()
-        return row[0] if row else 0
+        try:
+            result = await db.execute(
+                text("SELECT last_block FROM chain_cursors WHERE chain = :chain"),
+                {"chain": chain},
+            )
+            row = result.fetchone()
+            return row[0] if row else 0
+        except Exception as exc:
+            await db.rollback()
+            logger.error("Failed to get cursor for %s: %s", chain, exc)
+            return 0
 
 
 transaction_service = TransactionService()
