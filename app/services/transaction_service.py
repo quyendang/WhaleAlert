@@ -66,7 +66,7 @@ class TransactionService:
                 (:tx_hash, :chain, :block_number, :block_time, :from_address, :to_address,
                  :from_label, :to_label, :amount_native, :native_symbol, :amount_usd,
                  :usd_price_used, :tx_type, :is_contract)
-            ON CONFLICT ON CONSTRAINT uq_wt_hash_chain DO NOTHING
+            ON CONFLICT (tx_hash, chain) DO NOTHING
         """)
 
         try:

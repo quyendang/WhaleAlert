@@ -1,4 +1,5 @@
 """Solana whale collector using public Solana RPC."""
+import asyncio
 import logging
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -11,15 +12,12 @@ from app.services.transaction_service import transaction_service
 
 logger = logging.getLogger(__name__)
 LAMPORTS = Decimal("1e9")
-SOL_RPC = "https://api.mainnet-beta.solana.com"
 
-# Known Solana exchange program addresses
-SOLANA_PROGRAMS = {
-    "9W959DqEETiGZocYWCQPaJ6sBmUzgfxXfqGeTEdp3aQP": "Orca",
-    "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc": "Whirlpool",
-    "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4": "Jupiter",
-    "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8": "Raydium",
-}
+# Public RPC endpoints — tried in order; falls back if one rate-limits
+SOL_RPC_ENDPOINTS = [
+    "https://api.mainnet-beta.solana.com",
+    "https://solana-mainnet.g.alchemy.com/v2/demo",  # Alchemy public demo
+]
 
 
 class SolCollector(BaseCollector):
@@ -35,8 +33,7 @@ class SolCollector(BaseCollector):
             if current_slot <= last_block:
                 return
 
-            # Fetch recent large transactions via getSignaturesForAddress on system program
-            signatures = await self._get_recent_signatures(limit=100)
+            signatures = await self._get_recent_signatures(limit=50)
             saved = 0
 
             for sig_info in signatures:
@@ -57,6 +54,8 @@ class SolCollector(BaseCollector):
 
                 amount_sol = Decimal(lamports) / LAMPORTS
                 block_time_ts = tx.get("blockTime") or sig_info.get("blockTime", 0)
+                if not block_time_ts:
+                    continue
                 block_time = datetime.fromtimestamp(block_time_ts, tz=timezone.utc)
 
                 accounts = tx.get("transaction", {}).get("message", {}).get("accountKeys", [])
@@ -84,55 +83,74 @@ class SolCollector(BaseCollector):
             logger.error("[SOL] Poll error: %s", exc)
             await transaction_service.update_cursor(db, self.chain, last_block, error=str(exc))
 
-    async def _get_slot(self) -> int:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(SOL_RPC, json={
-                "jsonrpc": "2.0", "id": 1, "method": "getSlot", "params": []
-            })
-            resp.raise_for_status()
-            return resp.json().get("result", 0)
+    # ── RPC helpers with retry + fallback ────────────────────────────────────
 
-    async def _get_recent_signatures(self, limit: int = 100) -> list[dict]:
-        """Get recent signatures from a large known address (Binance SOL hot wallet)."""
-        # Use a well-known high-volume account to capture large transfers
+    async def _rpc_post(self, payload: dict, retries: int = 3) -> dict | None:
+        """POST to Solana RPC with retry/backoff and endpoint fallback on 429."""
+        for endpoint in SOL_RPC_ENDPOINTS:
+            for attempt in range(retries):
+                try:
+                    async with httpx.AsyncClient(timeout=12) as client:
+                        resp = await client.post(endpoint, json=payload)
+
+                    if resp.status_code == 429:
+                        wait = 2 ** attempt
+                        logger.debug("[SOL] 429 on %s — backing off %ds", endpoint, wait)
+                        await asyncio.sleep(wait)
+                        continue
+
+                    if resp.status_code == 200:
+                        return resp.json()
+
+                except httpx.TimeoutException:
+                    if attempt < retries - 1:
+                        await asyncio.sleep(1)
+                except Exception as exc:
+                    logger.debug("[SOL] RPC error on %s: %s", endpoint, exc)
+                    break  # try next endpoint
+
+            # If we exhausted retries on this endpoint, try next endpoint
+        logger.warning("[SOL] All RPC endpoints failed for method=%s", payload.get("method"))
+        return None
+
+    async def _get_slot(self) -> int:
+        data = await self._rpc_post({"jsonrpc": "2.0", "id": 1, "method": "getSlot", "params": []})
+        return data.get("result", 0) if data else 0
+
+    async def _get_recent_signatures(self, limit: int = 50) -> list[dict]:
+        """Fetch recent signatures from known high-volume exchange accounts."""
         known_accounts = [
-            "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",  # Binance SOL
+            "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",  # Binance SOL hot wallet
             "5tzFkiKscXHK5ZXCGbXZxdw7gtrjzgQpv4er7QfYKDSF",  # Huobi SOL
         ]
-        all_sigs = []
-        async with httpx.AsyncClient(timeout=15) as client:
-            for account in known_accounts:
-                resp = await client.post(SOL_RPC, json={
-                    "jsonrpc": "2.0", "id": 1,
-                    "method": "getSignaturesForAddress",
-                    "params": [account, {"limit": limit // len(known_accounts)}],
-                })
-                if resp.status_code == 200:
-                    all_sigs.extend(resp.json().get("result", []))
+        all_sigs: list[dict] = []
+        per_account = max(1, limit // len(known_accounts))
+        for account in known_accounts:
+            data = await self._rpc_post({
+                "jsonrpc": "2.0", "id": 1,
+                "method": "getSignaturesForAddress",
+                "params": [account, {"limit": per_account}],
+            })
+            if data:
+                all_sigs.extend(data.get("result", []))
         return all_sigs
 
     async def _get_transaction(self, signature: str) -> dict | None:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(SOL_RPC, json={
-                "jsonrpc": "2.0", "id": 1,
-                "method": "getTransaction",
-                "params": [signature, {"encoding": "json", "maxSupportedTransactionVersion": 0}],
-            })
-            if resp.status_code == 200:
-                return resp.json().get("result")
-        return None
+        data = await self._rpc_post({
+            "jsonrpc": "2.0", "id": 1,
+            "method": "getTransaction",
+            "params": [signature, {"encoding": "json", "maxSupportedTransactionVersion": 0}],
+        })
+        return data.get("result") if data else None
 
     def _extract_lamport_transfer(self, tx: dict) -> int:
-        """Extract the largest SOL transfer amount from a transaction."""
+        """Return the largest absolute balance change across all accounts in the tx."""
         meta = tx.get("meta", {})
-        pre_balances = meta.get("preBalances", [])
-        post_balances = meta.get("postBalances", [])
-        if not pre_balances or not post_balances:
+        pre = meta.get("preBalances", [])
+        post = meta.get("postBalances", [])
+        if not pre or not post:
             return 0
-        # Find the max absolute balance change (excluding fee payer index 0 partially)
-        max_change = 0
-        for i in range(min(len(pre_balances), len(post_balances))):
-            change = abs(pre_balances[i] - post_balances[i])
-            if change > max_change:
-                max_change = change
-        return max_change
+        return max(
+            (abs(pre[i] - post[i]) for i in range(min(len(pre), len(post)))),
+            default=0,
+        )

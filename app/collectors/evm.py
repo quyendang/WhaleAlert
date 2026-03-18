@@ -84,6 +84,14 @@ CHAIN_CONFIGS: dict[str, dict] = {
 }
 
 
+# Chains disabled at runtime because the free Etherscan API plan doesn't support them.
+# Set once on first encounter; prevents repeated failing API calls.
+_unsupported_chains: set[str] = set()
+
+# Substring that appears in Etherscan's response when a chain isn't on the free plan
+_FREE_PLAN_ERROR = "free api access is not supported for this chain"
+
+
 class EvmCollector(BaseCollector):
     """
     Unified EVM-chain whale collector via Etherscan API V2.
@@ -113,6 +121,9 @@ class EvmCollector(BaseCollector):
         self.log_poll_start()
         if not self._api_key:
             logger.warning("[%s] No ETHERSCAN_API_KEY set, skipping", self.chain)
+            return
+        if self.chain in _unsupported_chains:
+            logger.debug("[%s] Skipping — chain not supported on free Etherscan plan", self.chain)
             return
 
         last_block = await transaction_service.get_cursor(db, self.chain)
@@ -235,6 +246,15 @@ class EvmCollector(BaseCollector):
             action="eth_blockNumber",
         )
         result = data.get("result", "0x0")
+        # Detect free-plan restriction before trying to parse the result as hex
+        if isinstance(result, str) and _FREE_PLAN_ERROR in result.lower():
+            _unsupported_chains.add(self.chain)
+            logger.warning(
+                "[%s] Chain not available on free Etherscan plan — collector disabled. "
+                "Upgrade at https://etherscan.io/apis or use a dedicated chain scanner API.",
+                self.chain,
+            )
+            raise RuntimeError(f"[{self.chain}] Etherscan free plan does not support this chain")
         return int(result, 16)
 
     async def _get_token_logs(
