@@ -50,21 +50,49 @@ FastAPI routes
 ### Key files
 
 - `app/main.py` — lifespan (runs migrations, inits cursors, starts scheduler), web UI routes, Jinja2 template filters
+- `app/collectors/evm.py` — unified EVM collector using **Etherscan API V2** (`https://api.etherscan.io/v2/api`); handles ETH/BSC/MATIC via `chainid` parameter; all instances share `etherscan_limiter`
 - `app/collectors/base.py` — abstract `BaseCollector` with `poll(db)` interface
+- `app/services/rate_limiter.py` — `AsyncRateLimiter` token bucket; singleton `etherscan_limiter` (4 req/s) shared by all EVM collectors
 - `app/services/transaction_service.py` — `save_if_whale()`: price lookup → threshold check → `INSERT ... ON CONFLICT DO NOTHING`
 - `app/services/price_service.py` — CoinGecko TTL cache; stablecoins always return 1.0
-- `app/services/scheduler.py` — APScheduler job registration; each chain has its own job and interval
+- `app/services/scheduler.py` — APScheduler job registration with staggered start times (ETH+5s, BSC+15s, MATIC+25s) to prevent burst
 - `app/models/transaction.py` — `WhaleTransaction` + `ChainCursor` SQLAlchemy models
 - `app/api/transactions.py` — REST endpoints + SSE feed endpoint
 
-### Adding a new blockchain
+### Etherscan API V2
 
-1. Create `app/collectors/newchain.py` extending `BaseCollector` with `chain`, `native_symbol` class attrs and `poll(db)` method
-2. Add the collector to `app/collectors/__init__.py`
-3. Add to `_collectors` and `_intervals` dicts in `app/services/scheduler.py`
-4. Add chain to `CHAINS` list in `app/main.py` and `app/api/stats.py`
-5. Add to `COINGECKO_IDS` in `app/services/price_service.py` if needed
-6. Add whale threshold to `app/config.py`
+- **Base URL**: `https://api.etherscan.io/v2/api`
+- **Single key** for all EVM chains — set `ETHERSCAN_API_KEY` only
+- **Chain IDs**: ETH=1, BSC=56, Polygon/MATIC=137
+- **Rate limit**: 5 req/s, 100K calls/day (free tier)
+- Rate limiter is set to **4 req/s** with burst=4 (buffer below the 5/s cap)
+- Retry logic: 3 attempts with exponential backoff (1s → 2s → 4s) on HTTP 429 or Etherscan rate-limit message
+
+### Data collection strategy (EVM)
+
+Each chain per poll makes:
+1. `proxy/eth_blockNumber` → 1 call (get current block)
+2. `logs/getLogs` per tracked token → N calls (ERC-20 Transfer events in block range, filtered by `topic0=Transfer`)
+3. `account/txlist` per whale address → M calls (native token transfers from known exchange wallets)
+
+Estimated daily usage: ~43K calls (ETH ~17K + BSC ~14K + MATIC ~12K) — well within 100K free limit.
+
+**BSC token decimals**: USDT and USDC on BSC use **18 decimals** (not 6 like on Ethereum). This is handled in `CHAIN_CONFIGS` in `evm.py`.
+
+### Adding a new EVM chain (Etherscan V2 supported)
+
+1. Add entry to `CHAIN_CONFIGS` in `app/collectors/evm.py` with `chain_id`, `native_symbol`, `tracked_tokens`, `whale_addresses`
+2. Add chain to `CHAINS` list in `app/main.py` and `app/api/stats.py`
+3. Add new poll job in `app/services/scheduler.py` with staggered `next_run_time`
+4. Add threshold in `app/config.py` and `whale_thresholds` property
+5. Add CoinGecko mapping in `app/services/price_service.py` if new native token
+
+### Adding a non-EVM chain (BTC/SOL/TRX style)
+
+1. Create `app/collectors/newchain.py` extending `BaseCollector`
+2. Add to `app/collectors/__init__.py`
+3. Add poll job in `app/services/scheduler.py`
+4. Add chain to `CHAINS`, threshold to config, CoinGecko mapping
 
 ### Cursor-based incremental polling
 

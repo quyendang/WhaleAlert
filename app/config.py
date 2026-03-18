@@ -8,11 +8,14 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "postgresql+asyncpg://user:password@localhost:5432/whalealert"
 
-    # API Keys
+    # Etherscan API V2 — one key covers ETH (chainid=1), BSC (chainid=56), Polygon (chainid=137)
+    # and 60+ other EVM chains. Get your free key at: https://etherscan.io/apis
     etherscan_api_key: str = ""
-    bscscan_api_key: str = ""
-    polygonscan_api_key: str = ""
+
+    # TronGrid (optional — works without key but rate limit is lower)
     trongrid_api_key: str = ""
+
+    # CoinGecko (leave blank for free public endpoint; add Pro key for higher limits)
     coingecko_api_key: str = ""
 
     # App
@@ -20,7 +23,7 @@ class Settings(BaseSettings):
     port: int = 8000
     app_env: str = "production"
 
-    # Whale thresholds in USD
+    # Whale thresholds in USD (override per chain via env var)
     whale_threshold_eth: int = 500_000
     whale_threshold_btc: int = 500_000
     whale_threshold_bsc: int = 200_000

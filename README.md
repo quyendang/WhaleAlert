@@ -49,17 +49,17 @@ uvicorn app.main:app --reload --port 8000
 
 ## API Keys
 
-All API keys are **free**. The more keys you add, the more chains you'll see data from.
+Only **one key** is needed for all EVM chains thanks to Etherscan API V2.
 
-| Blockchain | Register at | Free Tier |
-|-----------|-------------|-----------|
-| **ETH** | [etherscan.io/apis](https://etherscan.io/apis) | 5 req/s, 100K calls/day |
-| **BSC** | [bscscan.com/apis](https://bscscan.com/apis) | Same as Etherscan |
-| **MATIC** | [polygonscan.com/apis](https://polygonscan.com/apis) | Same as Etherscan |
-| **TRX** | [trongrid.io](https://www.trongrid.io/) | Optional (higher rate limit) |
-| **BTC** | Blockstream.info | ✅ No key needed |
-| **SOL** | Solana public RPC | ✅ No key needed |
-| **Prices** | CoinGecko | ✅ No key needed |
+| Chain(s) | Register at | Free Tier | Key Name |
+|----------|-------------|-----------|----------|
+| **ETH + BSC + MATIC** (+ 60 more EVM) | [etherscan.io/apis](https://etherscan.io/apis) | 5 req/s, 100K calls/day | `ETHERSCAN_API_KEY` |
+| **TRX** | [trongrid.io](https://www.trongrid.io/) | Optional (higher rate limit) | `TRONGRID_API_KEY` |
+| **BTC** | Blockstream.info | ✅ No key needed | — |
+| **SOL** | Solana public RPC | ✅ No key needed | — |
+| **Prices** | CoinGecko | ✅ No key needed | — |
+
+> **Etherscan API V2** uses a single key for all chains. Pass `chainid=1` for ETH, `chainid=56` for BSC, `chainid=137` for Polygon. No separate BSCScan or PolygonScan keys needed.
 
 ## API Reference
 
