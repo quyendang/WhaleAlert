@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+
+{% block title %}Tx {{ tx.tx_hash[:12] }}… · Whale Alert{% endblock %}
+
+{% block content %}
+{% set chain_colors = {
+    'ETH': 'bg-blue-600', 'BTC': 'bg-orange-500', 'BSC': 'bg-yellow-500',
+    'SOL': 'bg-purple-500', 'TRX': 'bg-red-500', 'MATIC': 'bg-violet-500',
+} %}
+{% set explorer_urls = {
+    'ETH': 'https://etherscan.io/tx/',
+    'BTC': 'https://blockstream.info/tx/',
+    'BSC': 'https://bscscan.com/tx/',
+    'SOL': 'https://solscan.io/tx/',
+    'TRX': 'https://tronscan.org/#/transaction/',
+    'MATIC': 'https://polygonscan.com/tx/',
+} %}
+
+<div class="max-w-3xl mx-auto px-4 py-8">
+    <a href="/" class="text-gray-400 hover:text-white text-sm mb-6 inline-block">← Back to feed</a>
+
+    <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+        <!-- Header -->
+        <div class="p-6 border-b border-gray-800 flex items-start gap-4">
+            <span class="inline-block {{ chain_colors.get(tx.chain, 'bg-gray-600') }} text-white text-sm font-bold px-3 py-1 rounded">
+                {{ tx.chain }}
+            </span>
+            <div>
+                <h1 class="text-white font-bold text-lg">
+                    {{ tx.amount_native | format_native }} {{ tx.native_symbol }}
+                    {% if tx.amount_usd %}
+                    <span class="text-gray-400 font-normal text-base">(${{ tx.amount_usd | format_usd }})</span>
+                    {% endif %}
+                </h1>
+                <p class="text-gray-400 text-sm mt-1">
+                    {{ tx.tx_type | title }} · {{ tx.block_time.strftime('%Y-%m-%d %H:%M:%S UTC') }}
+                </p>
+            </div>
+        </div>
+
+        <!-- Details -->
+        <dl class="divide-y divide-gray-800">
+            {% set rows = [
+                ('Transaction Hash', tx.tx_hash, 'hash'),
+                ('Block', tx.block_number | string if tx.block_number else '—', 'text'),
+                ('Block Time', tx.block_time.strftime('%Y-%m-%d %H:%M:%S UTC'), 'text'),
+                ('Detected At', tx.detected_at.strftime('%Y-%m-%d %H:%M:%S UTC'), 'text'),
+                ('From', tx.from_address or '—', 'address'),
+                ('From Label', tx.from_label or '—', 'text'),
+                ('To', tx.to_address or '—', 'address'),
+                ('To Label', tx.to_label or '—', 'text'),
+                ('Amount', tx.amount_native | string + ' ' + tx.native_symbol, 'text'),
+                ('USD Value', '$' + (tx.amount_usd | format_usd) if tx.amount_usd else '—', 'text'),
+                ('Price Used', '$' + (tx.usd_price_used | string) if tx.usd_price_used else '—', 'text'),
+                ('Is Contract', 'Yes' if tx.is_contract else 'No', 'text'),
+            ] %}
+            {% for label, value, type in rows %}
+            <div class="flex flex-col sm:flex-row sm:items-center px-6 py-3">
+                <dt class="text-gray-400 text-sm w-36 shrink-0">{{ label }}</dt>
+                <dd class="text-gray-200 text-sm font-mono mt-1 sm:mt-0 break-all">
+                    {% if type == 'hash' %}
+                    <span>{{ value }}</span>
+                    <button onclick="navigator.clipboard.writeText('{{ value }}')" class="ml-2 text-gray-500 hover:text-blue-400 text-xs border border-gray-700 rounded px-1">copy</button>
+                    {% else %}
+                    {{ value }}
+                    {% endif %}
+                </dd>
+            </div>
+            {% endfor %}
+        </dl>
+
+        <!-- Explorer link -->
+        <div class="p-6 border-t border-gray-800">
+            <a href="{{ explorer_urls.get(tx.chain, '#') }}{{ tx.tx_hash }}"
+               target="_blank"
+               class="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm font-medium transition-colors">
+                View on Block Explorer ↗
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}

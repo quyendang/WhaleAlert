@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+
+{% block title %}Whale Alert - Real-Time Crypto Large Transactions{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+
+    <!-- Stats Bar -->
+    <div id="stats-bar" class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+        <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+            <p class="text-gray-400 text-xs uppercase tracking-wider mb-1">Transactions 24h</p>
+            <p class="text-white text-2xl font-bold" id="stat-count">—</p>
+        </div>
+        <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+            <p class="text-gray-400 text-xs uppercase tracking-wider mb-1">Volume 24h</p>
+            <p class="text-white text-2xl font-bold" id="stat-volume">—</p>
+        </div>
+        <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+            <p class="text-gray-400 text-xs uppercase tracking-wider mb-1">Largest Tx 24h</p>
+            <p class="text-white text-2xl font-bold" id="stat-largest">—</p>
+        </div>
+        <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+            <p class="text-gray-400 text-xs uppercase tracking-wider mb-1">Active Chains</p>
+            <p class="text-white text-2xl font-bold" id="stat-chains">6</p>
+        </div>
+    </div>
+
+    <!-- Filter Bar -->
+    <div class="bg-gray-900 border border-gray-800 rounded-lg p-4 mb-4 flex flex-wrap gap-3 items-center">
+        <div class="flex items-center gap-2">
+            <label class="text-gray-400 text-sm">Chain:</label>
+            <select id="filter-chain" class="bg-gray-800 border border-gray-700 text-white text-sm rounded px-2 py-1 focus:outline-none focus:border-blue-500">
+                <option value="">All Chains</option>
+                <option value="ETH">ETH</option>
+                <option value="BTC">BTC</option>
+                <option value="BSC">BSC</option>
+                <option value="SOL">SOL</option>
+                <option value="TRX">TRX</option>
+                <option value="MATIC">MATIC</option>
+            </select>
+        </div>
+        <div class="flex items-center gap-2">
+            <label class="text-gray-400 text-sm">Min USD:</label>
+            <select id="filter-min-usd" class="bg-gray-800 border border-gray-700 text-white text-sm rounded px-2 py-1 focus:outline-none focus:border-blue-500">
+                <option value="">Any</option>
+                <option value="100000">$100K+</option>
+                <option value="500000">$500K+</option>
+                <option value="1000000">$1M+</option>
+                <option value="10000000">$10M+</option>
+                <option value="100000000">$100M+</option>
+            </select>
+        </div>
+        <div class="flex items-center gap-2">
+            <label class="text-gray-400 text-sm">Sort:</label>
+            <select id="filter-sort" class="bg-gray-800 border border-gray-700 text-white text-sm rounded px-2 py-1 focus:outline-none focus:border-blue-500">
+                <option value="detected_at">Newest First</option>
+                <option value="amount_usd">Largest First</option>
+            </select>
+        </div>
+        <button onclick="clearFilters()" class="ml-auto text-gray-400 hover:text-white text-sm border border-gray-700 rounded px-3 py-1 transition-colors">
+            Clear
+        </button>
+    </div>
+
+    <!-- New items notification -->
+    <div id="new-items-banner" class="hidden fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-blue-600 text-white px-6 py-2 rounded-full shadow-lg cursor-pointer z-40 text-sm font-medium" onclick="scrollToTop()">
+        ↑ <span id="new-count">0</span> new transactions — click to view
+    </div>
+
+    <!-- Connection status -->
+    <div id="connection-banner" class="hidden bg-yellow-900 border border-yellow-700 text-yellow-200 text-sm px-4 py-2 rounded mb-3">
+        ⚠️ Live feed disconnected — reconnecting...
+    </div>
+
+    <!-- Transactions Table -->
+    <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="bg-gray-800 text-gray-400 text-xs uppercase tracking-wider">
+                        <th class="px-4 py-3 text-left">Time</th>
+                        <th class="px-4 py-3 text-left">Chain</th>
+                        <th class="px-4 py-3 text-right">Amount</th>
+                        <th class="px-4 py-3 text-left hidden sm:table-cell">From</th>
+                        <th class="px-4 py-3 text-left hidden sm:table-cell">To</th>
+                        <th class="px-4 py-3 text-left hidden md:table-cell">Type</th>
+                        <th class="px-4 py-3 text-center hidden lg:table-cell">Tx</th>
+                    </tr>
+                </thead>
+                <tbody id="tx-table-body" class="divide-y divide-gray-800">
+                    {% for tx in transactions %}
+                    {% include "partials/transaction_row.html" %}
+                    {% else %}
+                    <tr>
+                        <td colspan="7" class="px-4 py-12 text-center text-gray-500">
+                            No whale transactions found yet. Collectors are running...
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination -->
+        <div class="flex items-center justify-between px-4 py-3 border-t border-gray-800">
+            <span class="text-gray-400 text-sm" id="pagination-info">
+                Page {{ page }} — {{ total }} total
+            </span>
+            <div class="flex gap-2">
+                {% if page > 1 %}
+                <a href="?page={{ page - 1 }}{% if chain %}&chain={{ chain }}{% endif %}" class="bg-gray-800 hover:bg-gray-700 text-white px-3 py-1 rounded text-sm transition-colors">← Prev</a>
+                {% endif %}
+                {% if page * page_size < total %}
+                <a href="?page={{ page + 1 }}{% if chain %}&chain={{ chain }}{% endif %}" class="bg-gray-800 hover:bg-gray-700 text-white px-3 py-1 rounded text-sm transition-colors">Next →</a>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/feed.js"></script>
+<script>
+    // Load stats on page load
+    loadStats();
+
+    // Apply active chain filter if set
+    {% if active_chain %}
+    document.getElementById('filter-chain').value = '{{ active_chain }}';
+    {% endif %}
+
+    document.getElementById('filter-chain').addEventListener('change', applyFilters);
+    document.getElementById('filter-min-usd').addEventListener('change', applyFilters);
+    document.getElementById('filter-sort').addEventListener('change', applyFilters);
+</script>
+{% endblock %}

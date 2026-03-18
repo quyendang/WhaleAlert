@@ -1,0 +1,71 @@
+{% set chain_colors = {
+    'ETH': 'bg-blue-600',
+    'BTC': 'bg-orange-500',
+    'BSC': 'bg-yellow-500',
+    'SOL': 'bg-purple-500',
+    'TRX': 'bg-red-500',
+    'MATIC': 'bg-violet-500',
+} %}
+{% set type_labels = {
+    'exchange_deposit': ('Deposit', 'text-red-400'),
+    'exchange_withdrawal': ('Withdrawal', 'text-green-400'),
+    'mint': ('Mint', 'text-yellow-400'),
+    'burn': ('Burn', 'text-orange-400'),
+    'transfer': ('Transfer', 'text-gray-400'),
+} %}
+{% set type_info = type_labels.get(tx.tx_type, ('Transfer', 'text-gray-400')) %}
+{% set explorer_urls = {
+    'ETH': 'https://etherscan.io/tx/',
+    'BTC': 'https://blockstream.info/tx/',
+    'BSC': 'https://bscscan.com/tx/',
+    'SOL': 'https://solscan.io/tx/',
+    'TRX': 'https://tronscan.org/#/transaction/',
+    'MATIC': 'https://polygonscan.com/tx/',
+} %}
+
+<tr class="hover:bg-gray-800/50 transition-colors cursor-pointer" onclick="window.location='/tx/{{ tx.id }}'">
+    <td class="px-4 py-3 text-gray-300 whitespace-nowrap text-xs">
+        <span title="{{ tx.block_time }}">{{ tx.block_time.strftime('%H:%M:%S') }}</span>
+        <br><span class="text-gray-500">{{ tx.block_time.strftime('%b %d') }}</span>
+    </td>
+    <td class="px-4 py-3">
+        <span class="inline-block {{ chain_colors.get(tx.chain, 'bg-gray-600') }} text-white text-xs font-bold px-2 py-0.5 rounded">
+            {{ tx.chain }}
+        </span>
+    </td>
+    <td class="px-4 py-3 text-right">
+        <div class="font-semibold text-white">{{ tx.amount_native | format_native }} {{ tx.native_symbol }}</div>
+        {% if tx.amount_usd %}
+        <div class="text-gray-400 text-xs">${{ tx.amount_usd | format_usd }}</div>
+        {% endif %}
+    </td>
+    <td class="px-4 py-3 hidden sm:table-cell">
+        <span class="{% if tx.from_label != 'Unknown' %}text-blue-400 font-medium{% else %}text-gray-500 font-mono text-xs{% endif %}">
+            {% if tx.from_label != 'Unknown' %}
+                {{ tx.from_label }}
+            {% else %}
+                {{ tx.from_address[:8] }}...{{ tx.from_address[-4:] if tx.from_address else '—' }}
+            {% endif %}
+        </span>
+    </td>
+    <td class="px-4 py-3 hidden sm:table-cell">
+        <span class="{% if tx.to_label != 'Unknown' %}text-blue-400 font-medium{% else %}text-gray-500 font-mono text-xs{% endif %}">
+            {% if tx.to_label != 'Unknown' %}
+                {{ tx.to_label }}
+            {% else %}
+                {{ tx.to_address[:8] }}...{{ tx.to_address[-4:] if tx.to_address else '—' }}
+            {% endif %}
+        </span>
+    </td>
+    <td class="px-4 py-3 hidden md:table-cell">
+        <span class="text-xs {{ type_info[1] }}">{{ type_info[0] }}</span>
+    </td>
+    <td class="px-4 py-3 text-center hidden lg:table-cell">
+        <a href="{{ explorer_urls.get(tx.chain, '#') }}{{ tx.tx_hash }}"
+           target="_blank"
+           onclick="event.stopPropagation()"
+           class="text-gray-500 hover:text-blue-400 transition-colors text-xs font-mono">
+            {{ tx.tx_hash[:8] }}…
+        </a>
+    </td>
+</tr>
