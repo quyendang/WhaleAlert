@@ -78,9 +78,9 @@ class BtcCollector(BaseCollector):
 
     async def _get_tip(self) -> dict:
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(f"{BLOCKSTREAM_URL}/blocks/tip")
+            resp = await client.get(f"{BLOCKSTREAM_URL}/blocks")
             resp.raise_for_status()
-            return resp.json()
+            return resp.json()[0]  # /blocks returns list; first item is the latest block
 
     async def _get_block_hash(self, height: int) -> str | None:
         async with httpx.AsyncClient(timeout=10) as client:

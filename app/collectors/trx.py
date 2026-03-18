@@ -90,15 +90,25 @@ class TrxCollector(BaseCollector):
             return resp.json().get("block_header", {}).get("raw_data", {}).get("number", 0)
 
     async def _fetch_transactions(self, limit: int = 50) -> list[dict]:
+        """Fetch recent TRX transfers from known high-volume exchange addresses."""
+        known_addresses = [
+            "TKkeiboTkxXKJpbmVFbv4a8ov5rAfRDMf9",  # Binance TRX hot wallet
+            "TVj7RNVHy6thbM7BWdSe9G6gXwKhjhdNZS",  # Binance cold
+        ]
+        headers = {"Accept": "application/json"}
+        if self._settings.trongrid_api_key:
+            headers["TRON-PRO-API-KEY"] = self._settings.trongrid_api_key
+
+        per_address = max(1, limit // len(known_addresses))
+        all_txs: list[dict] = []
+
         async with httpx.AsyncClient(timeout=15) as client:
-            headers = {"Accept": "application/json"}
-            if self._settings.trongrid_api_key:
-                headers["TRON-PRO-API-KEY"] = self._settings.trongrid_api_key
-            resp = await client.get(
-                f"{TRONGRID_URL}/v1/transactions",
-                params={"limit": limit, "only_confirmed": "true"},
-                headers=headers,
-            )
-            if resp.status_code == 200:
-                return resp.json().get("data", [])
-        return []
+            for address in known_addresses:
+                resp = await client.get(
+                    f"{TRONGRID_URL}/v1/accounts/{address}/transactions",
+                    params={"limit": per_address, "only_confirmed": "true"},
+                    headers=headers,
+                )
+                if resp.status_code == 200:
+                    all_txs.extend(resp.json().get("data", []))
+        return all_txs
